@@ -1,0 +1,12 @@
+*
+!.gitignore
+!checkpoints
+!detection3d
+!detection3d/**
+!segmentation3d
+!segmentation3d/**
+!__main__.py
+!requirements
+!README
+!LICENSE
+__pycache__

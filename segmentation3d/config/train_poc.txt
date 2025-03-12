@@ -1,0 +1,5 @@
+2
+/data/deng/DentalEngine-main/Train/seg/case_1_cbct_trauma/org.nii.gz
+/data/deng/DentalEngine-main/Train/seg/case_1_cbct_trauma/seg_head.nii.gz
+/data/deng/DentalEngine-main/Train/seg/case_2_cbct_trauma/org.nii.gz
+/data/deng/DentalEngine-main/Train/seg/case_2_cbct_trauma/seg_head.nii.gz

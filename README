@@ -1,0 +1,9 @@
+Will expand later.
+
+Prerequisite:
+Download checkpoints at https://hmethodist.box.com/s/jspvc67zh6ntc2nx1raqgyr4d15uwaiu, and unzip it so that there are two new sub-directories under './checkpoints', namely 'segmentation' and 'detection'.
+Activate a proper Python environment with dependencies satisfied. Dependencies are listed in './requirements'. Tested as of 03/12/2025 are Python 3.12 and the latest pip packages.
+    In particular, `python -c 'import torch; print(torch.cuda.is_available())'` must produce 'True'
+
+Usage:
+Drop this repo in your current working directory, then run `python -m skullengine -i '/path/to/dicom/dir/or/image/file' -o '/path/to/output/dir'`
