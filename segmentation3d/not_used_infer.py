@@ -292,6 +292,19 @@ def main(argv):
     parser.add_argument('--checkpoint-dir',
                         help='segmentation model dir')
 
+    parser.add_argument('--seg-bone', action='store_true',
+                        help='Generate bone segmentation without later refinement.')
+    
+    parser.add_argument('--seg-and-refine', action='store_true',
+                        help='Generate refined bone segmentation.')
+    
+    parser.add_argument('--seg-teeth', action='store_true',
+                        help='Generate teeth segmentation.')
+    
+    parser.add_argument('--all', action='store_true',
+                        help='Generate everything.')
+    
+
     args, unknown_pars = parser.parse_known_args(argv)
 
     img_name = os.path.basename(args.input)
@@ -334,13 +347,30 @@ def main(argv):
         lmk = {x[0]: x[1:] for x in lmk}
 
     seg_model_parent_dir = os.path.join(args.checkpoint_dir, 'segmentation')
-    seg = segmentation_bone(img, seg_model_parent_dir, 0)
-    seg = refine_segmentation_bone(img, seg, lmk, seg_model_parent_dir, 0)
-    seg_teeth = segmentation_teeth(img, seg_model_parent_dir, 0)
 
-    sitk.WriteImage(seg, os.path.join(args.output_dir, 'seg-'+img_name))
-    sitk.WriteImage(seg_teeth, os.path.join(
-        args.output_dir, 'seg-teeth-'+img_name))
+    gen_lmk = args.seg_and_refine or args.all
+    
+    if gen_lmk and not args.landmark:
+        raise ValueError('landmark is not provided.')
+
+    if args.seg_bone or args.seg_and_refine or args.all:
+
+        seg = segmentation_bone(img, seg_model_parent_dir, 0)
+
+        if args.seg_bone or args.all:
+            sitk.WriteImage(seg, os.path.join(
+                args.output_dir, 'seg-no-patch-refine-'+img_name))
+
+        if args.seg_and_refine or args.all:
+            seg = refine_segmentation_bone(
+                img, seg, lmk, seg_model_parent_dir, 0)
+            sitk.WriteImage(seg, os.path.join(
+                args.output_dir, 'seg-'+img_name))
+
+    if args.seg_teeth:
+        seg_teeth = segmentation_teeth(img, seg_model_parent_dir, 0)
+        sitk.WriteImage(seg_teeth, os.path.join(
+            args.output_dir, 'seg-teeth-'+img_name))
 
 
 if __name__ == '__main__':

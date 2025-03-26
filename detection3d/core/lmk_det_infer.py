@@ -83,7 +83,7 @@ def read_test_folder(folder_path, is_dicom_folder):
     return file_name_list, file_path_list
 
 
-def load_det_model(model_folder, gpu_id=0):
+def load_det_model(model_folder, gpu_id):
     """ load segmentation model from folder
     :param model_folder:    the folder containing the segmentation model
     :param gpu_id:          the gpu device id to run the segmentation model
@@ -114,10 +114,10 @@ def load_det_model(model_folder, gpu_id=0):
             f"skullengine.detection3d.network.{state['net']}")
         net = net_module.Net(state['in_channels'],
                              state['num_landmark_classes'] + 1)
-        net = nn.parallel.DataParallel(net, device_ids=[0])
+        net = nn.parallel.DataParallel(net)
         net.load_state_dict(state['state_dict'])
+        net = net.module.to(f"cuda:{gpu_id}")
         net.eval()
-        net = net.cuda()
 
     else:
         state = torch.load(chk_file, map_location='cpu')
@@ -129,6 +129,7 @@ def load_det_model(model_folder, gpu_id=0):
         net.eval()
 
     model.net = net
+    model.device = gpu_id
     model.crop_size, model.crop_spacing, model.max_stride, model.interpolation = \
         state['crop_size'], state['crop_spacing'], state['max_stride'], state['interpolation']
     model.in_channels, model.num_landmark_classes = \
@@ -151,7 +152,7 @@ def load_det_model(model_folder, gpu_id=0):
     return model
 
 
-def detection_voi(model, iso_image, start_voxel, end_voxel, use_gpu):
+def detection_voi(model, iso_image, start_voxel, end_voxel):
     """ Segment the volume of interest
     :param model:           the loaded segmentation model.
     :param iso_image:       the image volume that has the same spacing with the model's resampling spacing.
@@ -171,8 +172,9 @@ def detection_voi(model, iso_image, start_voxel, end_voxel, use_gpu):
         roi_image = model.crop_normalizers[0](roi_image)
 
     roi_image_tensor = convert_image_to_tensor(roi_image).unsqueeze(0)
-    if use_gpu:
-        roi_image_tensor = roi_image_tensor.cuda()
+
+    if model.device >= 0:
+        roi_image_tensor = roi_image_tensor.cuda(model.device)
 
     with torch.no_grad():
         landmarks_pred = model['net'](roi_image_tensor)
@@ -180,12 +182,10 @@ def detection_voi(model, iso_image, start_voxel, end_voxel, use_gpu):
     return landmarks_pred
 
 
-def detection_single_image(image, image_name='', model='', gpu_id=0, save_prob=None, save_folder=None):
+def detection_single_image(image, model):
     """ volumetric segmentation for single image
     :param image: the input volume
-    :param image_name: the name of the image
     :param model: the detection model
-    :param gpu_id: the id of the gpu
     :return: a dictionary containing the detected landmarks
     """
     assert isinstance(image, sitk.Image)
@@ -205,7 +205,7 @@ def detection_single_image(image, image_name='', model='', gpu_id=0, save_prob=N
     start_voxel, end_voxel = [0, 0, 0], [
         int(iso_image.GetSize()[idx]) for idx in range(3)]
     voi_landmarks_pred = detection_voi(
-        model, iso_image, start_voxel, end_voxel, gpu_id >= 0)
+        model, iso_image, start_voxel, end_voxel)
     print('{:0.2f}%'.format(100))
 
     # convert to landmark masks
@@ -350,7 +350,7 @@ def detection(input_path, model_folder, gpu_id, return_landmark_file, save_landm
 
             voi_landmarks_pred = \
                 detection_voi(model, iso_image, start_voxel,
-                              end_voxel, gpu_id > 0)
+                              end_voxel)
 
             voi_landmark_mask_preds.append(voi_landmarks_pred)
             print('{:0.2f}%'.format((idx + 1) / len(start_voxels) * 100))

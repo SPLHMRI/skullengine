@@ -135,7 +135,7 @@ def check_input(input_path):
     return is_dicom_folder, file_name_list, file_path_list
 
 
-def load_single_model(model_folder, gpu_id=0):
+def load_single_model(model_folder, gpu_id):
     """ load single segmentation model from folder
     :param model_folder:    the folder containing the segmentation model
     :param gpu_id:          the gpu device id to run the segmentation model
@@ -152,18 +152,16 @@ def load_single_model(model_folder, gpu_id=0):
     chk_file = os.path.join(latest_checkpoint_dir, 'params.pth')
 
     if gpu_id >= 0:
-        os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(int(gpu_id))
         # load network module
         state = torch.load(chk_file)
         net_module = importlib.import_module(
             f"skullengine.segmentation3d.network.{state['net']}")
         net = net_module.SegmentationNet(
             state['in_channels'], state['out_channels'])
-        net = nn.parallel.DataParallel(net, device_ids=[0])
+        net = nn.parallel.DataParallel(net)
         net.load_state_dict(state['state_dict'])
+        net = net.module.to(f"cuda:{gpu_id}")
         net.eval()
-        net = net.cuda()
-        del os.environ['CUDA_VISIBLE_DEVICES']
 
     else:
         state = torch.load(chk_file, map_location='cpu')
@@ -190,6 +188,7 @@ def load_single_model(model_folder, gpu_id=0):
         net.eval()
 
     model.net = net
+    model.device = gpu_id
     model.spacing, model.max_stride, model.interpolation = state[
         'spacing'], state['max_stride'], state['interpolation']
     model.in_channels, model.out_channels = state['in_channels'], state['out_channels']
@@ -210,7 +209,7 @@ def load_single_model(model_folder, gpu_id=0):
     return model
 
 
-def load_models(model_folder, gpu_id=0):
+def load_models(model_folder, gpu_id):
     """ load segmentation model from folder
     :param model_folder:    the folder containing the segmentation model
     :param gpu_id:          the gpu device id to run the segmentation model
@@ -256,7 +255,7 @@ def load_models(model_folder, gpu_id=0):
     return models
 
 
-def segmentation_voi(model, iso_image, start_voxel, end_voxel, use_gpu):
+def segmentation_voi(model, iso_image, start_voxel, end_voxel):
     """ Segment the volume of interest
     :param model:           the loaded segmentation model.
     :param iso_image:       the image volume that has the same spacing with the model's resampling spacing.
@@ -276,8 +275,8 @@ def segmentation_voi(model, iso_image, start_voxel, end_voxel, use_gpu):
         roi_image = model.crop_normalizers[0](roi_image)
 
     roi_image_tensor = convert_image_to_tensor(roi_image).unsqueeze(0)
-    if use_gpu:
-        roi_image_tensor = roi_image_tensor.cuda()
+    if model.device >= 0:
+        roi_image_tensor = roi_image_tensor.cuda(model.device)
 
     with torch.no_grad():
         probs = model['net'](roi_image_tensor)
@@ -300,7 +299,7 @@ def segmentation_voi(model, iso_image, start_voxel, end_voxel, use_gpu):
     return mean_prob_maps
 
 
-def segmentation_volume(model, cfg, image, bbox_start_voxel, bbox_end_voxel, use_gpu):
+def segmentation_volume(model, cfg, image, bbox_start_voxel, bbox_end_voxel):
     """ Segment the volume
     :param model:             the loaded segmentation model.
     :param image:             the image volume.
@@ -314,10 +313,6 @@ def segmentation_volume(model, cfg, image, bbox_start_voxel, bbox_end_voxel, use
     assert isinstance(image, sitk.Image)
 
     model_spacing = copy.deepcopy(model['spacing'])
-    if not use_gpu:
-        for idx in range(3):
-            model_spacing[idx] = model_spacing[idx] * \
-                cfg.cpu_model_spacing_increase_ratio
 
     iso_image = resample_spacing(
         image, model_spacing, model['max_stride'], model['interpolation'])
@@ -337,13 +332,6 @@ def segmentation_volume(model, cfg, image, bbox_start_voxel, bbox_end_voxel, use
     elif partition_type == 'SIZE':
         partition_stride = copy.deepcopy(cfg.partition_stride)
         partition_size = copy.deepcopy(cfg.partition_size)
-        if not use_gpu:
-            for idx in range(3):
-                partition_size[idx] = partition_size[idx] * \
-                    cfg.cpu_partition_decrease_ratio
-                partition_stride[idx] = partition_stride[idx] * \
-                    cfg.cpu_partition_decrease_ratio
-
         max_stride = model['max_stride']
 
         # convert bounding box to the iso image frame
@@ -384,7 +372,7 @@ def segmentation_volume(model, cfg, image, bbox_start_voxel, bbox_end_voxel, use
         start_voxel, end_voxel = start_voxels[idx], end_voxels[idx]
 
         voi_mean_probs = segmentation_voi(
-            model, iso_image, start_voxel, end_voxel, use_gpu)
+            model, iso_image, start_voxel, end_voxel)
         for idy in range(num_classes):
             iso_mean_probs[idy] = add_image_region(
                 iso_mean_probs[idy], start_voxel, end_voxel, voi_mean_probs[idy])
@@ -425,7 +413,7 @@ def segmentation_volume(model, cfg, image, bbox_start_voxel, bbox_end_voxel, use
     return mean_probs, mask
 
 
-def segmentation_internal(image, models, gpu_id):
+def segmentation_internal(image, models):
     """
     volumetric image segmentation engine
     :param input_path:          The path of text file, a single image file or a root dir with all image files
@@ -441,19 +429,16 @@ def segmentation_internal(image, models, gpu_id):
 
     if models['infer_cfg'].general.single_scale == 'coarse':
         mean_probs, mask = segmentation_volume(
-            models['coarse_model'], models['infer_cfg'].coarse, image, None, None, gpu_id > 0
-        )
+            models['coarse_model'], models['infer_cfg'].coarse, image, None, None)
 
     elif models['infer_cfg'].general.single_scale == 'fine':
         mean_probs, mask = segmentation_volume(
-            models['fine_model'], models['infer_cfg'].fine, image, None, None, gpu_id > 0
-        )
+            models['fine_model'], models['infer_cfg'].fine, image, None, None)
 
     elif models['infer_cfg'].general.single_scale == 'DISABLE':
         print('Coarse segmentation: ')
         _, mask = segmentation_volume(
-            models['coarse_model'], models['infer_cfg'].coarse, image, None, None, gpu_id > 0
-        )
+            models['coarse_model'], models['infer_cfg'].coarse, image, None, None)
 
         start_voxel, end_voxel = get_bounding_box(mask, None)
 
@@ -465,8 +450,7 @@ def segmentation_internal(image, models, gpu_id):
 
         print('Fine segmentation (bbox ratio: {:.2f}%): '.format(bbox_ratio))
         mean_probs, mask = segmentation_volume(
-            models['fine_model'], models['infer_cfg'].fine, image, start_voxel, end_voxel, gpu_id > 0
-        )
+            models['fine_model'], models['infer_cfg'].fine, image, start_voxel, end_voxel)
 
     else:
         raise ValueError('Unsupported scale type!')
